@@ -1,0 +1,94 @@
+---
+title: "Practical Machine Learning Course Project "
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+library(caret)
+library(parallel)
+library(doParallel)
+```
+
+## Abstract
+
+In this project we assess dataset that contains data from wearable devices. Data was recorded from accelerometers during 6 people perform barbell lifts correctly and incorrectly in 5 different ways. Our goal is to build accurate model to predict classe of activity based on accelerometers data. Data were taken the following source  http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har website.
+
+
+## Part 1 - Data analysys and cleaning
+
+Data is separated in two dataset files pml-training.csv and pml-testing.csv, each of them contains 160 columns with different variables the last one is classe factor variable (A to E). Train dataset contains 19622 rows of  measurements. Test dataset contains 20 rows of measurements. Some of the columns contains a lot of NAs, first 5 columns contains meta information about the measurement (user, timestams, number of measurement).
+```{r}
+trainData <- read.csv('pml-training.csv');
+testData <- read.csv('pml-testing.csv');
+```
+
+In order to increase performance of our future model we need to decrease number of features of our model. One way of doing this is to remove columns with near zero variance, also we would like to remove NA features (with NA that is more than 95% of total column values count), also we remove first 5 features that contains no relevant info for the prediction model, also since some of the features will. After performing removal of this columns we have only 54 columns left.
+
+```{r}
+# first five columns
+trainData <- trainData[,-(1:5)];
+testData <- testData[,-(1:5)];
+
+#near zero variance
+zeroVars <- nearZeroVar(trainData);
+trainData <- trainData[,-zeroVars];
+testData <- testData[,-zeroVars];
+
+#na columns
+nas <- sapply(trainData, function(x) mean(is.na(x))) > 0.95
+trainData <- trainData[,nas==F];
+testData <- testData[,nas==F];
+
+length(names(trainData));
+```
+
+In order to get out of sample error we need to split our train data set into train and validation sets. We will use randomly partitioned spliting 75%/25%.
+
+```{r}
+set.seed(42)
+trainIdx <- createDataPartition(y=trainData$classe, p=0.75, list=F)
+trainSet <- trainData[trainIdx, ];
+validationSet <- trainData[-trainIdx, ];
+```
+
+##Model Selection
+
+First we try rpart categorisation model
+```{r}
+set.seed(42)
+rpartFit<-train(classe~.,method="rpart", data=trainSet);
+print(rpartFit$finalModel);
+confusionMatrix(trainSet$classe,predict(rpartFit, trainSet))
+```
+
+Confusion matrix for test set shows .49 Accuracy and what is interesting there is no predictions at all for D classe.
+Lets then try another model - random forests. Since it works not so fast on a windows platform out of the box we will use some adjustments that were suggested on the following resource https://github.com/lgreski/datasciencectacontent/blob/master/markdown/pml-randomForestPerformance.md 
+
+Train control used is cross validation with parrallel support, and number of trees is 200.
+
+```{r}
+cluster <- makeCluster(detectCores() - 1); # convention to leave 1 core for OS
+registerDoParallel(cluster);
+set.seed(42)
+tc <- trainControl(method = "cv", number = 4, allowParallel = TRUE);
+rfFit<-train(classe~.,method="rf", data=trainSet, ntree = 200, trControl=tc);
+```
+
+Model shows testSet accuracy 1 - which looks a bit overfitted.
+```{r}
+confusionMatrix(trainSet$classe,predict(rfFit, trainSet))
+```
+
+
+With a validationSet accuracy is 0.9982 which leaves out of sample error 0.2%
+```{r}
+confusionMatrix(validationSet$classe,predict(rfFit, validationSet))
+```
+
+
+##Prediction on a test set
+```{r}
+predict(rfFit, testData)
+```
